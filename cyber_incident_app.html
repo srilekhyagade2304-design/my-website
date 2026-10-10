@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cyber Incident Management System</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f4f6fa;--card:#fff;--tx:#1b2433;--mu:#667085;--bd:#dde2ea;--ac:#1d4ed8;--acx:#fff;--bad:#fde4e4;--ok:#16794a}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f141c;--card:#18202c;--tx:#e6ebf3;--mu:#98a2b3;--bd:#2a3442;--ac:#5b8cff;--acx:#0b1220;--bad:#4a1f24;--ok:#4ade80}}
+:root[data-theme="dark"]{--bg:#0f141c;--card:#18202c;--tx:#e6ebf3;--mu:#98a2b3;--bd:#2a3442;--ac:#5b8cff;--acx:#0b1220;--bad:#4a1f24;--ok:#4ade80}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--bd)}
+h1{font-size:16px;margin:0}.mu{color:var(--mu);font-size:12px}
+main{padding:14px;max-width:1150px;margin:auto}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px}
+button{font:inherit;background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:7px;padding:6px 11px;cursor:pointer}
+button.p{background:var(--ac);color:var(--acx);border-color:var(--ac)}button:disabled{opacity:.4;cursor:not-allowed}
+input,select,textarea{font:inherit;background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:7px;padding:6px 8px;max-width:100%}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.tabs{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}.tabs button.on{background:var(--ac);color:var(--acx)}
+.wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:640px}
+th,td{text-align:left;padding:6px 9px;border-bottom:1px solid var(--bd);white-space:nowrap}th{color:var(--mu);font-size:12px}
+tr.sel td{outline:0;background:color-mix(in srgb,var(--ac) 18%,transparent)}tr.bad td{background:var(--bad)}tbody tr{cursor:pointer}
+.stat{display:inline-block;margin-right:16px;font-weight:600}
+.tag{padding:1px 8px;border-radius:9px;font-size:12px;border:1px solid var(--bd)}
+#login{max-width:380px;margin:40px auto}#login input{width:100%;margin:4px 0 10px}
+dialog{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:12px;max-width:min(560px,94vw);width:100%}
+dialog::backdrop{background:#0008}dialog label{display:block;margin-top:8px;font-size:12px;color:var(--mu)}dialog input,dialog select,dialog textarea{width:100%}
+.tl div{padding:5px 0;border-bottom:1px dashed var(--bd)}.err{color:#d92d20;font-weight:600}
+</style></head><body>
+<header><h1>🛡️ Cyber Incident Management System</h1><div class="mu" id="who"></div></header>
+<main id="app"></main>
+<dialog id="dlg"><h3 id="dt" style="margin-top:0"></h3><div id="db"></div><div class="row" style="justify-content:flex-end"><button id="dc">Cancel</button><button class="p" id="dok">OK</button></div></dialog>
+<script>
+const $=s=>document.querySelector(s),E=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const F=t=>t?new Date(t).toLocaleString():'';
+const sha=async b=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',typeof b=='string'?new TextEncoder().encode(b):b))].map(x=>x.toString(16).padStart(2,'0')).join('');
+let S,me=null,tab='inc',selInc=null,fails=0;
+const save=()=>{try{localStorage.setItem('cyberdb',JSON.stringify(S))}catch(e){}};
+const nid=k=>S.seq[k]=(S.seq[k]||0)+1;
+const U=id=>S.users.find(u=>u.id==id)||{};
+const audit=(op,tbl,rid,o,n)=>S.audit.push({id:nid('a'),op,tbl,rid,o,n,by:me?me.name:'SYSTEM',t:Date.now()});
+// ---- PL/SQL equivalents ----
+function recordLogin(uid,dev,ip,status,t=Date.now()){
+  const f=S.logins.filter(l=>l.uid==uid&&l.status=='FAILED'&&l.t>=t-600000).length;
+  const flag=(status=='FAILED'&&f>=2)||(status=='SUCCESS'&&f>=3)?1:0;
+  S.logins.push({id:nid('l'),uid,dev,ip,t,status,sus:flag});}
+function newIncident(by,login,title,desc,sev,t=Date.now()){
+  const i={id:nid('i'),by,login,title,desc,sev,status:'OPEN',t,rt:null};S.incidents.push(i);
+  audit('INSERT','INCIDENTS',i.id,null,`status=OPEN,severity=${sev}`);return i;}
+function setStatus(i,st){const o=i.status;i.status=st;if(st=='RESOLVED'&&o!='RESOLVED')i.rt=Date.now();
+  audit('UPDATE','INCIDENTS',i.id,`status=${o},severity=${i.sev}`,`status=${st},severity=${i.sev}`);}
+function logAction(inc,by,d){S.actions.push({id:nid('x'),inc,by,d,t:Date.now()});}
+function assignInv(inc,inv,admin){
+  if(U(inv).role!='INVESTIGATOR')throw Error('User is not an investigator');
+  if(S.assigns.some(a=>a.inc==inc&&a.inv==inv))throw Error('Investigator already assigned (unique constraint violated)');
+  S.assigns.push({inc,inv,t:Date.now()});const i=S.incidents.find(x=>x.id==inc);
+  if(i.status=='OPEN')setStatus(i,'INVESTIGATING');logAction(inc,admin,'Assigned investigator #'+inv);}
+const riskScore=uid=>S.logins.filter(l=>l.uid==uid).reduce((s,l)=>s+(l.status=='FAILED'?1:0)+5*l.sus,0);
+// ---- seed (same sample data as the SQL script) ----
+async function seed(){
+  S={seq:{},users:[],devices:[],logins:[],incidents:[],assigns:[],evidence:[],actions:[],audit:[]};
+  for(const [n,e,r,p] of [['Asha Admin','asha@corp.com','ADMIN','admin123'],['Ravi Kumar','ravi@corp.com','INVESTIGATOR','invest123'],['Meena Rao','meena@corp.com','INVESTIGATOR','invest456'],['Karan Shah','karan@corp.com','EMPLOYEE','emp123'],['Priya Nair','priya@corp.com','EMPLOYEE','emp456']])
+    S.users.push({id:nid('u'),name:n,email:e,role:r,hash:await sha(p)});
+  S.devices.push({id:nid('d'),uid:4,name:'Karan-Laptop',os:'Windows 11'},{id:nid('d'),uid:5,name:'Priya-MacBook',os:'macOS'});
+  const D=864e5;recordLogin(4,1,'10.0.0.15','SUCCESS',Date.now()-2*D);recordLogin(5,2,'10.0.0.22','SUCCESS',Date.now()-D);
+  for(const s of ['FAILED','FAILED','FAILED','SUCCESS'])recordLogin(4,null,'185.220.101.7',s);
+  me={name:'SYSTEM'};
+  newIncident(4,6,'Suspicious login from unknown IP','Login from 185.220.101.7 after repeated failures','HIGH');
+  assignInv(1,2,1);
+  S.evidence.push({id:nid('e'),inc:1,type:'LOG',path:'/evidence/inc1/auth.log',hash:await sha('auth.log contents'),by:2,t:Date.now()});
+  logAction(1,2,'Reset password and revoked active sessions');setStatus(S.incidents[0],'RESOLVED');me=null;save();}
+// ---- dialog helper ----
+function modal(title,body,ok,fn){return new Promise(res=>{const d=$('#dlg');$('#dt').textContent=title;$('#db').innerHTML=body;
+  $('#dok').style.display=ok?'':'none';$('#dok').textContent=ok||'OK';$('#dc').textContent=ok?'Cancel':'Close';
+  $('#dc').onclick=()=>{d.close();res()};
+  $('#dok').onclick=async()=>{try{if(await fn?.()===false)return}catch(e){toast(e.message);return}d.close();res()};d.showModal();});}
+const toast=m=>modal('Error','<div class="err">'+E(m)+'</div>');
+const info=(t,m)=>modal(t,m);
+// ---- login ----
+function loginView(){me=null;$('#who').textContent='';
+  $('#app').innerHTML=`<div class="card" id="login"><h3 style="margin-top:0">Login (attempt ${fails+1} of 3)</h3>
+  <label class="mu">Email</label><input id="em" value="asha@corp.com"><label class="mu">Password</label><input id="pw" type="password" value="admin123">
+  <div class="row"><button class="p" id="go">Login</button><button id="rs">Reset demo data</button></div><div id="lm" class="err"></div>
+  <p class="mu">Demo accounts:<br>asha@corp.com / admin123 (ADMIN)<br>ravi@corp.com / invest123 (INVESTIGATOR)<br>karan@corp.com / emp123 (EMPLOYEE)<br>3 wrong passwords in 10 min get flagged as suspicious, like record_login().</p></div>`;
+  $('#rs').onclick=async()=>{await seed();fails=0;loginView()};
+  $('#pw').onkeydown=e=>e.key=='Enter'&&$('#go').click();
+  $('#go').onclick=async()=>{const u=S.users.find(x=>x.email==$('#em').value.trim().toLowerCase());
+    if(!u){$('#lm').textContent='Unknown email';return}
+    const ok=u.hash==await sha($('#pw').value);const dev=S.devices.find(d=>d.uid==u.id);
+    recordLogin(u.id,dev?dev.id:null,'192.168.1.'+(20+u.id),ok?'SUCCESS':'FAILED');save();
+    if(ok){fails=0;me=u;selInc=null;tab='inc';shell()}else{fails++;if(fails>=3){fails=0;$('#lm').textContent='Too many failed attempts (logged)';}else $('#lm').textContent='Wrong password';
+      if(fails)$('#login h3').textContent=`Login (attempt ${fails+1} of 3)`}};}
+// ---- main shell ----
+const staff=()=>me.role!='EMPLOYEE';
+function shell(){$('#who').innerHTML=`${E(me.name)} <span class="tag">${me.role}</span> <button id="lo">Logout</button>`;$('#lo').onclick=loginView;draw();}
+function tabs(){const t=[['inc','Incidents']];if(staff())t.push(['log','Login History'],['risk','Risk Scores']);if(me.role=='ADMIN')t.push(['aud','Audit Trail']);
+  return '<div class="tabs">'+t.map(([k,l])=>`<button class="${tab==k?'on':''}" data-t="${k}">${l}</button>`).join('')+'</div>';}
+function draw(){$('#app').innerHTML=tabs()+'<div class="card" id="pane"></div>';
+  document.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{tab=b.dataset.t;draw()});
+  ({inc:incTab,log:logTab,risk:riskTab,aud:audTab})[tab]();}
+const table=(h,rows,cls)=>`<div class="wrap"><table><thead><tr>${h.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${rows.map((r,i)=>`<tr data-i="${r[0]}" class="${cls?cls(r,i):''}">${r.map(c=>`<td>${E(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+let fl={st:'ALL',sv:'ALL',kw:''};
+function incTab(){
+  const mine=me.role=='EMPLOYEE'?me.id:0,base=S.incidents.filter(i=>!mine||i.by==mine);
+  const rows=base.filter(i=>(fl.st=='ALL'||i.status==fl.st)&&(fl.sv=='ALL'||i.sev==fl.sv)&&(i.title+' '+i.desc).toLowerCase().includes(fl.kw.toLowerCase())).sort((a,b)=>b.id-a.id);
+  const cnt=['OPEN','INVESTIGATING','RESOLVED','CLOSED'].map(s=>`<span class="stat">${s}: ${base.filter(i=>i.status==s).length}</span>`).join('');
+  const sus=mine?'':`<span class="stat">Suspicious logins: ${S.logins.filter(l=>l.sus).length}</span>`;
+  const sel=v=>x=>`<option ${x==v?'selected':''}>${x}</option>`;
+  $('#pane').innerHTML=`<div>${cnt}${sus}</div><div class="row">Status <select id="fs">${['ALL','OPEN','INVESTIGATING','RESOLVED','CLOSED'].map(sel(fl.st)).join('')}</select>
+  Severity <select id="fv">${['ALL','LOW','MEDIUM','HIGH','CRITICAL'].map(sel(fl.sv)).join('')}</select> Keyword <input id="fk" value="${E(fl.kw)}" size="14"><button id="sb">Search</button></div>
+  ${table(['ID','Title','Severity','Status','Reported by','Assigned to','Created'],rows.map(i=>[i.id,i.title,i.sev,i.status,U(i.by).name,S.assigns.filter(a=>a.inc==i.id).map(a=>U(a.inv).name).join(', ')||'-',F(i.t)]),r=>r[0]==selInc?'sel':'')}
+  <div class="row"><button class="p" id="b-rep">Report incident</button><button id="b-asg" ${me.role!='ADMIN'?'disabled':''}>Assign investigator</button>
+  <button id="b-evd" ${staff()?'':'disabled'}>Add evidence</button><button id="b-ver" ${staff()?'':'disabled'}>Verify evidence</button><button id="b-act" ${staff()?'':'disabled'}>Add action</button>
+  <button id="b-res" ${staff()?'':'disabled'}>Resolve</button><button id="b-tl">Timeline</button><button id="b-del" ${staff()?'':'disabled'}>Tamper test</button><button id="b-csv">Export CSV</button></div>
+  <div class="mu">Click a row to select it; double-click for the timeline.${mine?' Employees only see their own incidents.':''}</div>`;
+  const go=()=>{fl={st:$('#fs').value,sv:$('#fv').value,kw:$('#fk').value};draw()};
+  $('#sb').onclick=go;$('#fs').onchange=go;$('#fv').onchange=go;$('#fk').onkeydown=e=>e.key=='Enter'&&go();
+  document.querySelectorAll('tbody tr').forEach(r=>{r.onclick=()=>{selInc=+r.dataset.i;document.querySelectorAll('tbody tr').forEach(x=>x.classList.toggle('sel',x==r))};r.ondblclick=()=>{selInc=+r.dataset.i;timeline()}});
+  $('#b-rep').onclick=report;$('#b-asg').onclick=assign;$('#b-evd').onclick=addEv;$('#b-ver').onclick=verEv;$('#b-act').onclick=addAct;$('#b-res').onclick=resolve;$('#b-tl').onclick=timeline;$('#b-del').onclick=tamper;$('#b-csv').onclick=()=>csv(rows);}
+const need=()=>selInc?S.incidents.find(i=>i.id==selInc):(toast('Select an incident first'),null);
+async function report(){const mine=me.role=='EMPLOYEE'?me.id:0;
+  const ls=S.logins.filter(l=>l.sus&&(!mine||l.uid==mine)).reverse();
+  await modal('Report incident',`<label>Title</label><input id="f1"><label>Description</label><textarea id="f2" rows="3"></textarea><label>Severity</label><select id="f3"><option>LOW</option><option selected>MEDIUM</option><option>HIGH</option><option>CRITICAL</option></select>
+  <label>Related suspicious login</label><select id="f4"><option value="">(none)</option>${ls.map(l=>`<option value="${l.id}">${l.id}  ${E(l.ip)}  ${F(l.t)}</option>`).join('')}</select>`,'Submit',()=>{
+    const t=$('#f1').value.trim();if(!t)throw Error('Title is required');newIncident(me.id,+$('#f4').value||null,t,$('#f2').value.trim(),$('#f3').value);save();});draw();}
+async function assign(){const i=need();if(!i)return;const inv=S.users.filter(u=>u.role=='INVESTIGATOR');
+  await modal('Assign investigator to #'+i.id,`<select id="f1">${inv.map(u=>`<option value="${u.id}">${E(u.name)}</option>`).join('')}</select>`,'Assign',()=>{assignInv(i.id,+$('#f1').value,me.id);save();});draw();}
+async function addEv(){const i=need();if(!i)return;
+  await modal('Add evidence to #'+i.id,`<label>Type</label><select id="f1">${['LOG','SCREENSHOT','DISK_IMAGE','EMAIL','OTHER'].map(x=>`<option>${x}</option>`).join('')}</select><label>File (hashed locally with SHA-256, never uploaded)</label><input type="file" id="f2">`,'Save',async()=>{
+    const f=$('#f2').files[0];if(!f)throw Error('Choose a file');const h=await sha(await f.arrayBuffer());
+    S.evidence.push({id:nid('e'),inc:i.id,type:$('#f1').value,path:f.name,hash:h,by:me.id,t:Date.now()});logAction(i.id,me.id,'Collected evidence: '+f.name);save();
+    setTimeout(()=>info('Evidence saved','SHA-256:<br><code style="word-break:break-all">'+h+'</code>'),50);});}
+async function verEv(){const i=need();if(!i)return;const ev=S.evidence.filter(e=>e.inc==i.id);if(!ev.length)return info('Nothing to choose from','No evidence recorded for this incident.');
+  await modal('Verify evidence',`<label>Evidence</label><select id="f1">${ev.map(e=>`<option value="${e.id}">${e.id} - ${E(e.path)}</option>`).join('')}</select><label>Select the file again</label><input type="file" id="f2">`,'Verify',async()=>{
+    const e=ev.find(x=>x.id==$('#f1').value),f=$('#f2').files[0];if(!f)throw Error('Choose the file to check');
+    const ok=await sha(await f.arrayBuffer())==e.hash;logAction(i.id,me.id,ok?'Integrity verified (hash matches): '+e.path:'INTEGRITY CHECK FAILED: '+f.name+' was modified after collection (hash mismatch)');save();
+    setTimeout(()=>info(ok?'Integrity OK':'TAMPERING DETECTED',ok?'The file hash matches the hash stored at collection time.':'<span class="err">Hash mismatch: file was modified after collection.</span>'),50);});}
+async function addAct(){const i=need();if(!i)return;await modal('Add action','<label>Describe the action taken</label><textarea id="f1" rows="3"></textarea>','Add',()=>{const t=$('#f1').value.trim();if(!t)return false;logAction(i.id,me.id,t);save();});}
+function resolve(){const i=need();if(!i)return;setStatus(i,'RESOLVED');logAction(i.id,me.id,'Marked incident as resolved');save();draw();}
+const tamper=()=>{if(!need())return;toast('ORA-20010: Evidence is read-only: tampering is not allowed (trigger trg_evidence_protect)'.replace(/^ORA-\d+:\s*/,'')+' [DELETE on evidence blocked]');};
+function timeline(){const i=need();if(!i)return;const ev=[[i.t,'INCIDENT CREATED',i.title]];
+  S.evidence.filter(e=>e.inc==i.id).forEach(e=>ev.push([e.t,'EVIDENCE',U(e.by).name+' collected '+e.path]));
+  S.actions.filter(a=>a.inc==i.id).forEach(a=>ev.push([a.t,'ACTION',U(a.by).name+': '+a.d]));if(i.rt)ev.push([i.rt,'RESOLVED','Incident resolved']);
+  ev.sort((a,b)=>a[0]-b[0]);info('Timeline of incident #'+i.id,'<div class="tl">'+ev.map(e=>`<div><span class="mu">${F(e[0])}</span> &nbsp;<b>${e[1]}</b> - ${E(e[2])}</div>`).join('')+'</div>');}
+function csv(rows){const h=['ID','Title','Severity','Status','Reported by','Assigned to','Created'];
+  const t=[h,...rows.map(i=>[i.id,i.title,i.sev,i.status,U(i.by).name,S.assigns.filter(a=>a.inc==i.id).map(a=>U(a.inv).name).join(', ')||'-',F(i.t)])].map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\n');
+  modal('Export incidents (CSV)',`<textarea id="cv" rows="10" readonly style="font-family:monospace;font-size:12px">${E(t)}</textarea>`,'Copy',()=>{$('#cv').select();try{navigator.clipboard.writeText(t)}catch(e){document.execCommand('copy')}});}
+function logTab(){let k=window._lk||'',so=!!window._so;
+  const rows=S.logins.filter(l=>(U(l.uid).name.toLowerCase().includes(k.toLowerCase())||l.ip.includes(k))&&(!so||l.sus)).sort((a,b)=>b.id-a.id).slice(0,200);
+  $('#pane').innerHTML=`<div class="row">User or IP <input id="k" value="${E(k)}"> <label><input type="checkbox" id="so" ${so?'checked':''}> Suspicious only</label><button id="sb">Search</button></div>`+
+  table(['ID','User','IP address','Device','Time','Status','Suspicious'],rows.map(l=>[l.id,U(l.uid).name,l.ip,(S.devices.find(d=>d.id==l.dev)||{}).name||'unknown',F(l.t),l.status,l.sus?'YES':'no']),(r)=>r[6]=='YES'?'bad':'');
+  const go=()=>{window._lk=$('#k').value;window._so=$('#so').checked;logTab()};$('#sb').onclick=go;$('#so').onchange=go;$('#k').onkeydown=e=>e.key=='Enter'&&go();}
+function riskTab(){const r=S.users.map(u=>[u.name,riskScore(u.id)]).sort((a,b)=>b[1]-a[1]);let rk=0,pv=null;
+  const rows=r.map((x,i)=>{if(x[1]!==pv){rk=i+1;pv=x[1]}return[x[0],x[1],rk]});
+  $('#pane').innerHTML='<p class="mu">risk_score = failed logins + 5 × suspicious logins; ranked with RANK().</p>'+table(['User','Score','Rank'],rows);}
+function audTab(){$('#pane').innerHTML=table(['ID','Operation','Table','Record','Old value','New value','DB user','Time'],[...S.audit].reverse().slice(0,200).map(a=>[a.id,a.op,a.tbl,a.rid,a.o||'',a.n||'',a.by,F(a.t)]));}
+// ---- boot ----
+(async()=>{try{S=JSON.parse(localStorage.getItem('cyberdb'))}catch(e){}if(!S||!S.users)await seed();loginView();})();
+</script></body></html>
